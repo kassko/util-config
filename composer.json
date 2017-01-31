@@ -1,0 +1,20 @@
+{
+    "name": "kassko/util-config",
+    "description": "Config",
+    "license": "MIT",
+    "keywords": ["config"],
+    "require": {
+        "php": ">=5.5",
+        "kassko/util-reflector": "dev-master"
+    },
+    "autoload": {
+        "psr-4": {
+            "Kassko\\Util\\Config\\": "lib"
+        }
+    },
+    "config": {
+        "bin-dir": "bin"
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}
