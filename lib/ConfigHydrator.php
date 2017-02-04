@@ -1,5 +1,7 @@
 <?php
 
+namespace Kassko\Util\Config;
+
 /*
 methods:
     isRichWoman:
@@ -19,18 +21,20 @@ methods:
 class ConfigHydrator
 {
     /**
-     * @var string
-     */
-    private $rootNamespace;
-    /**
      * @var Reflector
      */
     private $reflector;
 
-    public function __construct($rootNamespace, Reflector $reflector)
+    public function __construct(Reflector $reflector)
     {
-        $this->rootNamespace = $rootNamespace . '\\';
         $this->reflector = $reflector;
+    }
+
+    public function extractConfig(&$config, $object)
+    {
+        foreach ($object as $propName => $propValue) {
+
+        }
     }
 
     public function hydrateCollection($config, $class)
@@ -38,17 +42,17 @@ class ConfigHydrator
         $collection = [];
 
         foreach ($config as $configKey => $configItem) {
-            $collection[$configKey] = $this->hydrate($configItem);
+            $collection[$configKey] = $this->hydrateObject($configItem, new $class);
         }
 
         return $collection;
     }
 
-    public function hydrate($config, $object)
+    public function hydrateObject($config, $object)
     {
         foreach ($config as $configKey => $configItem) {
             $propName = $this->toLowerCamelCase($configKey);
-            $properties = array_flip($this->reflector->getproperties(get_class($object)));
+            $properties = array_flip($this->reflector->getProperties(get_class($object)));
             if (!isset($properties[$propName])) {
                 continue;
             }
@@ -95,6 +99,36 @@ class ConfigHydrator
                 $object . $setter($propValue);
             }
         }
+    }
+
+    protected function findGetter($object, $propName, $methods)
+    {
+        $methodsBase = ucFirst($propName);
+
+        switch (true) {
+            case isset($setter = $methods['get' . $methodsBase]):
+                return $setter;
+            case isset($setter = $methods['is' . $methodsBase]):
+                return $setter;
+            case isset($setter = $methods['has' . $methodsBase]):
+                return $setter;
+        }
+
+        return null;
+    }
+
+    protected function findItemGetter($object, $propName, $methods)
+    {
+        $methodsBase = ucFirst($propName);
+
+        switch (true) {
+            case isset($setter = $methods['get' . $methodsBase]):
+                //$reflClass = $this->reflector->getReflectionClass(get_class($object));
+                //$reflClass->getReflectionMethod();
+                return $setter;
+        }
+
+        return null;
     }
 
     protected function findSetter($object, $propName, $methods)
