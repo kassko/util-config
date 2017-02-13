@@ -2,6 +2,8 @@
 
 namespace Kassko\Util\Config;
 
+use Kassko\Util\Reflection\ReflectorRepository;
+
 /*
 methods:
     isRichWoman:
@@ -21,13 +23,13 @@ methods:
 class ConfigHydrator
 {
     /**
-     * @var Reflector
+     * @var ReflectorRepository
      */
-    private $reflector;
+    private $reflectorRepo;
 
-    public function __construct(Reflector $reflector)
+    public function __construct(ReflectorRepository $reflectorRepo)
     {
-        $this->reflector = $reflector;
+        $this->reflectorRepo = $reflectorRepo;
     }
 
     public function extractConfig(&$config, $object)
@@ -50,122 +52,98 @@ class ConfigHydrator
 
     public function hydrateObject($config, $object)
     {
+        $class = get_class($object);
+        $reflClass = $this->reflectorRepo->reflClass($class);
+        $advReflClass = $this->reflectorRepo->advReflClass($class);
+        $accessorFinder = $this->reflectorRepo->accessorFinder($class);
+
         foreach ($config as $configKey => $configItem) {
             $propName = $this->toLowerCamelCase($configKey);
-            $properties = array_flip($this->reflector->getProperties(get_class($object)));
-            if (!isset($properties[$propName])) {
+
+            $properties = $advReflClass->getPropertiesNames();
+            //var_dump($properties, '[[', $propName, ']]');
+            /*if (!isset($properties[$propName])) {
                 continue;
-            }
+            }*/
 
-            $propType = $this->reflector->getPropertyType($propName);
-            $methods = array_flip($this->reflector->getMethods(get_class($object)));
+            $propDocParser = $this->reflectorRepo->propertyDocParser($class, $propName);
+            $propDocParser->parse();
+            //var_dump($propDocParser->getAllTags(), $class, $propName);
+            $propType = $propDocParser->getTag('var')->getType();
 
-            if ('[]' === substr($propType, -2)) {//If collection property.
+            if ('[]' === substr($propType, -2)) {//If object collection property.
+                $propType = substr($propType, 0, -2);
+                $methods = $advReflClass->getMethodsNames();
                 $propCollection = $this->hydrateCollection($configItem, $propType);
 
-                if (null !== $setter = $this->findSetter($object, $propName, $methods)) {
-                    $object . $setter($propCollection);
-                } elseif (null !== $adder = $this->findAdder($object, $propName, $methods)) {
-                    $reflMethod = new ReflectionMethod($class, $name);
-                    $nbParams = $reflMethod->getNumberOfParameters();
-                    if (2 === $nbParams) {
-                        foreach ($propCollection as $propKey => $propValue) {
-                            $object . $adder($propKey, $propValue);
-                        }
-                    } elseif (1 === $nbParams) {
-                        foreach ($propCollection as $propValue) {
-                            $object . $adder($propValue);
-                        }
-                    } else {
-                        throw new \RuntimeException(
-                            sprintf(
-                                'Cannot hydrate properly object "%s".'
-                                . 'The adder method "%s::%s" must contains either one or 2 parameters".'
-                                . ' Must look like either "%s::%s($value)" or "%s::%s($index, $value)"'
-                                . ' This method actually contains %d parameters',
-                                get_class($object),
-                                get_class($object),
-                                $adder,
-                                $nbParams
-                            )
-                        );
+                if (null !== $setter = $accessorFinder->findPropSetter($propName)) {
+                    $object->$setter($propCollection);
+                } elseif (null !== $adder = $accessorFinder->findPropAdder($propName)) {
+                    foreach ($propCollection as $propValue) {
+                        $object->$adder($propValue);
+                    }
+                } elseif (null !== $adder = $accessorFinder->findPropAssocAdder($propName)) {
+                    foreach ($propCollection as $propKey => $propValue) {
+                        $object->$adder($propKey, $propValue);
                     }
                 }
-            } else {//If single object property
+            } elseif ('array' === $propType) {//If scalar collection property.
+                $propCollection = $configItem;
+                if (null !== $setter = $accessorFinder->findPropSetter($propName)) {
+                    $object->$setter($propCollection);
+                } elseif (null !== $adder = $accessorFinder->findPropAdder($propName)) {
+                    foreach ($propCollection as $propValue) {
+                        $object->$adder($propValue);
+                    }
+                } elseif (null !== $adder = $accessorFinder->findPropAssocAdder($propName)) {
+                    foreach ($propCollection as $propKey => $propValue) {
+                        $object->$adder($propKey, $propValue);
+                    }
+                }
+            } elseif (!$this->isBuiltinType($propType)) {//If single object property.
                 $propValue = new $propType;
-                $this->hydrate($configItem, $propValue);
+                $this->hydrateObject($configItem, $propValue);
 
-                $setter = $this->findSetter($object, $propName, $methods);
-                $object . $setter($propValue);
+                if (null !== $setter = $accessorFinder->findPropSetter($propName)) {
+                    $object->$setter($propValue);
+                }
+            } else {//If scalar property.
+                var_dump(get_class($object), $propName);
+                if (null !== $setter = $accessorFinder->findPropSetter($propName)) {
+                    $object->$setter($configItem);
+                }
             }
         }
+
+        return $object;
     }
 
-    protected function findGetter($object, $propName, $methods)
+    protected function isBuiltinType($type)
     {
-        $methodsBase = ucFirst($propName);
-
-        switch (true) {
-            case isset($setter = $methods['get' . $methodsBase]):
-                return $setter;
-            case isset($setter = $methods['is' . $methodsBase]):
-                return $setter;
-            case isset($setter = $methods['has' . $methodsBase]):
-                return $setter;
-        }
-
-        return null;
-    }
-
-    protected function findItemGetter($object, $propName, $methods)
-    {
-        $methodsBase = ucFirst($propName);
-
-        switch (true) {
-            case isset($setter = $methods['get' . $methodsBase]):
-                //$reflClass = $this->reflector->getReflectionClass(get_class($object));
-                //$reflClass->getReflectionMethod();
-                return $setter;
-        }
-
-        return null;
-    }
-
-    protected function findSetter($object, $propName, $methods)
-    {
-        $methodsBase = ucFirst($propName);
-
-        switch (true) {
-            case isset($setter = $methods['set' . $methodsBase]):
-                return $setter;
-            case isset($setter = $methods['make' . $methodsBase]):
-                return $setter;
-            case isset($setter = $methods['with' . $methodsBase]):
-                return $setter;
-        }
-
-        return null;
-    }
-
-    protected function findAdder($object, $propName, $methods)
-    {
-        $methodsBase = substr(ucFirst($propName), 0, -1);
-
-        switch (true) {
-            case isset($setter = $methods['add' . $methodsBase]):
-                return $setter;
-            case isset($setter = $methods['push' . $methodsBase]):
-                return $setter;
-            case isset($setter = $methods['append' . $methodsBase]):
-                return $setter;
-        }
-
-        return null;
+        return in_array(
+            $type, [
+                'boolean',
+                'integer',
+                'int',
+                'float',
+                'string',
+                'array',
+                'object',
+                'callable',
+                'resource',
+                'null',
+                'mixed',
+                'number',
+                'callback',
+                'array|object',
+                'void',
+            ]
+        );
     }
 
     protected function toLowerCamelCase($dashCaseString)
     {
-        return implode('', array_map('ucFirst', explode('_', $dashCaseString)));
+        return lcfirst(implode('', array_map('ucFirst', explode('_', $dashCaseString))));
     }
 
     protected function toUpperCamelCase($dashCaseString)
@@ -199,8 +177,8 @@ class ConfigHydrator
 
             $class = $this->rootNamespace . $this->toUpperCamelCase($config['type_']);
 
-            $properties = array_flip($this->reflector->getPropertiesNames(get_class($class)));
-            $methods = array_flip($this->reflector->getMethodsNames(get_class($class)));
+            $properties = array_flip($this->reflectorRepo->getPropertiesNames(get_class($class)));
+            $methods = array_flip($this->reflectorRepo->getMethodsNames(get_class($class)));
 
             $instance = new $class;
             foreach ($config['config_'] as $configKey => $configItem) {
@@ -214,7 +192,7 @@ class ConfigHydrator
                 $setter  = $this->findSetter($propName, $object);
                 $object . $setter($propInstance);
 
-                //$propClass = $this->reflector->getPropertyType($propName);
+                //$propClass = $this->reflectorRepo->getPropertyType($propName);
             }
         } elseif (is_array($config)) {
 

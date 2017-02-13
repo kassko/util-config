@@ -4,8 +4,11 @@
     "license": "MIT",
     "keywords": ["config"],
     "require": {
-        "php": ">=5.5",
-        "kassko/util-reflector": "dev-master"
+        "php": ">=7",
+        "kassko/util-reflection": "dev-master"
+    },
+    "require-dev": {
+        "kassko/util-member-accessor": "dev-master"
     },
     "autoload": {
         "psr-4": {
