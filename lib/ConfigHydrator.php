@@ -32,10 +32,47 @@ class ConfigHydrator
         $this->reflectorRepo = $reflectorRepo;
     }
 
-    public function extractConfig(&$config, $object)
+    public function extractConfigFromCollection(&$config, $collection)
+    {
+        foreach ($collection as $key => $object) {
+            $this->extractConfigFromObject($collection[$key], new $object);
+        }
+    }
+
+    public function extractConfigFromObject(&$config, $object)
     {
         foreach ($object as $propName => $propValue) {
+            $propDocParser = $this->reflectorRepo->propDocParser($object, $propName);
 
+            if (is_array($propValue)) {
+                if (0 === current($propValue)) {//Case normally impossible, it means more than 1 nested array.
+                    $this->extractConfigFromCollection($config[$key], $object);
+                } else {
+                    $key = self::toDashCase($propName);
+                    $this->extractConfigFromObject($config[$kay], $propValue);
+                }
+            } else {
+                //If has a base class or interface, add _type, _config, _class
+                $key = self::toDashCase($propName);
+                $config = [];
+                if (null !== $tag = $propDocParser->getTag('config_type')) {
+                    if (2 !== $tag->getFieldsCount()) {
+                        throw new \LogicException(
+                            sprintf(
+                                'Cannot extract properly data from property "%s::%s"'
+                                'The annotation @config_type should contains one argument (the config type)',
+                                get_class($object),
+                                $propName
+                            )
+                        );
+                    }
+
+                    $config[$key]['_type'] = $tag->getField(1);
+                    $config[$key]['_config'] = [];
+                } else {
+                    $config[$key] = $propValue;
+                }
+            }
         }
     }
 
@@ -58,7 +95,7 @@ class ConfigHydrator
         $accessorFinder = $this->reflectorRepo->accessorFinder($class);
 
         foreach ($config as $configKey => $configItem) {
-            $propName = $this->toLowerCamelCase($configKey);
+            $propName = self::toLowerCamelCase($configKey);
 
             $properties = $advReflClass->getPropertiesNames();
             //var_dump($properties, '[[', $propName, ']]');
@@ -71,7 +108,7 @@ class ConfigHydrator
             //var_dump($propDocParser->getAllTags(), $class, $propName);
             $propType = $propDocParser->getTag('var')->getType();
 
-            if ('[]' === substr($propType, -2)) {//If object collection property.
+            if ($propType->isObjectCollection()) {//If object collection property.
                 $propType = substr($propType, 0, -2);
                 $methods = $advReflClass->getMethodsNames();
                 $propCollection = $this->hydrateCollection($configItem, $propType);
@@ -87,7 +124,7 @@ class ConfigHydrator
                         $object->$adder($propKey, $propValue);
                     }
                 }
-            } elseif ('array' === $propType) {//If scalar collection property.
+            } elseif ($propType->isCollection()) {//If scalar collection property.
                 $propCollection = $configItem;
                 if (null !== $setter = $accessorFinder->findPropSetter($propName)) {
                     $object->$setter($propCollection);
@@ -100,7 +137,31 @@ class ConfigHydrator
                         $object->$adder($propKey, $propValue);
                     }
                 }
-            } elseif (!$this->isBuiltinType($propType)) {//If single object property.
+            } elseif ($propType->isClass()) {//If single object property.
+                $specialsKeysCount = 0;
+                if (isset($configItem['_type'])) {
+                    $specialsKeysCount++;
+                }
+                if (isset($configItem['_config'])) {
+                    $specialsKeysCount++;
+                }
+                if (isset($configItem['_class'])) {
+                    $specialsKeysCount++;
+                }
+
+                if (0 !== $nb && 3 !== $nb) {
+                    throw new \LogicException(
+                        'Cannot hydrate properly the config.'
+                        PHP_EOL . 'You should specify either the 3 specials keys "_type", "_config", "_class"'
+                        PHP_EOL . 'or none of these three keys.'
+                    );
+                }
+
+                if (3 === $nb) {
+                    $configItem = $configItem['_config'];
+                    $propType = $configItem['_class'];
+                }
+
                 $propValue = new $propType;
                 $this->hydrateObject($configItem, $propValue);
 
@@ -108,7 +169,6 @@ class ConfigHydrator
                     $object->$setter($propValue);
                 }
             } else {//If scalar property.
-                var_dump(get_class($object), $propName);
                 if (null !== $setter = $accessorFinder->findPropSetter($propName)) {
                     $object->$setter($configItem);
                 }
@@ -118,35 +178,21 @@ class ConfigHydrator
         return $object;
     }
 
-    protected function isBuiltinType($type)
+    protected static function toDashCase($dashCaseString)
     {
-        return in_array(
-            $type, [
-                'boolean',
-                'integer',
-                'int',
-                'float',
-                'string',
-                'array',
-                'object',
-                'callable',
-                'resource',
-                'null',
-                'mixed',
-                'number',
-                'callback',
-                'array|object',
-                'void',
-            ]
+        return strtolower(
+            preg_replace(
+                array('/([A-Z]+)([A-Z][a-z])/', '/([a-z\d])([A-Z])/'), array('\\1_\\2', '\\1_\\2'), str_replace('_', '.', $dashCaseString)
+            )
         );
     }
 
-    protected function toLowerCamelCase($dashCaseString)
+    protected static function toLowerCamelCase($dashCaseString)
     {
         return lcfirst(implode('', array_map('ucFirst', explode('_', $dashCaseString))));
     }
 
-    protected function toUpperCamelCase($dashCaseString)
+    protected static function toUpperCamelCase($dashCaseString)
     {
         return ucFirst(implode('', array_map('ucFirst', explode('_', $dashCaseString))));
     }
@@ -183,7 +229,7 @@ class ConfigHydrator
             $instance = new $class;
             foreach ($config['config_'] as $configKey => $configItem) {
 
-                $propName = $this->toLowerCamelCase($configKey);
+                $propName = self::toLowerCamelCase($configKey);
                 if (!isset($properties[$propName])) {
                     continue;
                 }

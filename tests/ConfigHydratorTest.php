@@ -52,7 +52,7 @@ class ConfigHydratorTest extends \PHPUnit_Framework_TestCase
                         'country' => 'United State',
                     ],
                     'office_address' => [
-                        'state' => 'San Atonio',
+                        'state' => 'San Antonio',
                         'country' => 'United State',
                     ],
                 ]
