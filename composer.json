@@ -5,7 +5,7 @@
     "keywords": ["config"],
     "require": {
         "php": ">=7",
-        "kassko/util-reflection": "dev-master"
+        "kassko/util-reflection": "kassko-refacto"
     },
     "require-dev": {
         "kassko/util-member-accessor": "dev-master"
